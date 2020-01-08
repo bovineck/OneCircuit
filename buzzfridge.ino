@@ -3,9 +3,10 @@
 // description at https://www.youtube.com/watch?v=Belaszrz11s
 //
 // Sketch uses 452 bytes (44%) of program storage space.
-// Global variables use 5 bytes (7%) of dynamic memory, leaving 59 bytes for local variables.
+// Global variables use 5 bytes (7%) of dynamic memory.
 // Use of assembly would reduce code size and increase speed
-// Circuit consumes 170μA when sleeping
+// Circuit consumes 170μA when sleeping, most of which is through
+// the 10k button resistor, the chip itself is around 3μA.
 //
 // Author: A N Peck                    Date: Tuesday 7 January
 // -----------------------------------------------------------------
