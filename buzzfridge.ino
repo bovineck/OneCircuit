@@ -37,19 +37,19 @@ void powerDown()
   PCMSK |= (1 << InterruptPin);         // sets the Pin change interrupt mask
   ADCSRA &= ~(1 << ADEN);               // turn off ADC
   ACSR |= (1 << ACD);                   // turn off Analog comparator.
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN);  // sleep deeply little one
+  sleep_enable();                       // enable sleep mode
+  cli();                                // timed sequence
   BODCR = (1 << BODS) | (1 << BODSE);   // turn off brown out detector
   BODCR = (1 << BODS);
   sei();                                // enable global interrupts
-  set_sleep_mode(SLEEP_MODE_PWR_DOWN);  // sleep deeply little one
-  sleep_enable();                       // enable sleep mode
-  sleep_mode();                         // system sleeps here
+  sleep_cpu();                          // system sleeps here
 
   sleep_disable();                      // ISR routine returns here so wake up
   GIMSK &= ~(1 << PCIE);                // deactivate Pin change interrupts
   ADCSRA |= (1 << ADEN);                // turn on ADC
   ACSR = (0 << ACD);                    // turn on Analog comparator.
   delay(50);                            // settle time then ready for action
-
 }
 
 // pin change interrupt service routine
