@@ -1,0 +1,1977 @@
+
+
+;                                 REMCOM
+
+;         Removes comments from Assembler, C and Pascal source code
+
+;                                 A N Peck
+
+;     What  started out as a simple exercise in removing comments from
+;     source codes has grown into this monster that you see before you.
+;     Originally  badly written in Pascal, I switched to assembler and
+;     have  "completed"  the  program  many  times, only to return and
+;     tweek another feature or option.
+
+;     I'm  still  not completely satisfied, but I've decided to get on
+;     with my miserable life and set this program free!
+
+;     Some things to note:
+
+;     RemCom   should   be   fully  compatible with all Amigas, and it
+;     has  been  tested on all the machines I can lay my hands on.  It
+;     uses the  Asl  file  requester  by default, but if it can't find
+;     that  then  it  tries for the Arp file requester.  Failing that,
+;     the  two  gadgets  used  to activate the file requesters are not
+;     added  to the gadget list, and the user simply types in the path
+;     themselves.
+     
+;     I've been fooling around with AllocMem and FreeMem of late.  I'm
+;     still  not  100%  happy  with  my progress in this area, but the
+;     program  does  use  some  of  these  routines,  and  I  beg your
+;     forgiveness  if they are a bit shonky (I use the trial and error
+;     and error and error and error and error method of programming).
+
+;     RemCom.a  is  as completely commented as I could make it without
+;     insulting too many people.  If you require any information as to
+;     how  I  arrived at some of the solutions (e.g. the routines that
+;     mimic  gadtools  MX gadgets but work under both WB1.3 and WB2+),
+;     then    please    feel    free   to   bombard   me   with   your
+;     suggestions/comments.
+
+;     I used a HEAP of programs to produce this program, and here is a
+;     short list of those indispensable ones...
+
+;        Phxass/Phxlnk - F.Wille
+;        CED - Cygnus Software
+;        S-Exec - C. Wyndham
+;        Hextract - C. Wyndham
+;        DevPac - HiSoft
+;        DPaint - Electronic Arts
+;        Convbrush - D. Kinder
+;        Zap - T. Rossi
+;        ADis - M. Apel
+;        GadgetEd - Jan van den Baard
+;        Memon - D. Ekholm
+;        MyMem - D. Hooton
+;        PictSaver - P. Nielson
+
+;     The compiler report looks something like this...
+
+;        2177 lines in 2.76 sec = 47326 lines/min.
+;        Global symbols: 183
+;        Local symbols:  64
+;        Bytes gained by optimization: 684
+;        Code:   1 section(s)     4041 bytes
+;        Data:   1 section(s)     3852 bytes
+;        BSS:  none
+
+;     Finally,  my  undying  love and gratitude to Kymette and our two
+;     kids  Jackson  and  Mitchell.  Inspirational and tolerant, there
+;     would  be  no point in banging my head up against the brick wall
+;     of life without them.
+
+; Some Useful Definitions
+; -----------------------
+
+; You'll find all of these in the various Includes that come with
+; a compiler like DevPac.  Some are defined in structures such as
+; "GADGET", while others are library offsets.  If you are stuck for
+; such definitions, check out HexTract by Chas Wyndham (Fish 817).
+
+; Using these equivalents makes the code a heck of a lot easier to
+; read,  and adds nothing to the final executable size.  I'm still
+; occasionally  guilty of banging in a few unheralded numbers into
+; the  code,  but  I  try to mostly use these easier to understand
+; equivalents.
+
+; The first block of equivalents defines the boundaries of the memory
+; block that I'd like allocated.
+
+READBUFF                = 0        ; The start of the read block
+LINEBUFFER              = 2000     ; The buffer for each line
+DOSBASE                 = 2256     ; Space for DosBase
+INTBASE                 = 2260     ; Space for IntuitionBase
+REQBASE                 = 2264     ; Space for ArpBase
+INFLHD                  = 2268     ; Infile handle
+OTFLHD                  = 2272     ; Outfile handle
+MESSAGE                 = 2276     ; The final longword allocation
+                                   ; used for the Intuition message
+
+TOTALMEM                = 2280     ; The total memory required
+
+; Simple equivalents
+
+Apost                   = $27      ; Apostrophe
+Boolgadget              = $0001    ; Boolean Gadget type
+CR                      = $0D      ; Carriage Return
+Execbase                = $04      ; ExecBase (!)
+Gadclosewindow          = $200     ; Close window pressed
+Gadflags                = $0C      ; Gadget status (Gadget structure)
+Gadimage                = $0004    ; Gadget image type
+Gg_gadgetid             = $26      ; Gadget ID (Gadget structure)
+Iaddress                = $1C      ; Address of IDCMP message
+Im_class                = $14      ; Class for IDCMP message
+LF                      = $0A      ; LineFeed
+Mode_newfile            = $03EE    ; Access mode for open file
+Mode_oldfile            = $03ED    ; Access mode for open file
+Numchars                = $10      ; Number of chars in stringinfo
+Pr_cli                  = $AC      ; CLI offset in process structure
+Pr_msgport              = $5C      ; Message port for process structue
+Relverify               = $0001    ; Gadget relative verify
+Rp_jam1                 = $01      ; Jam mode 1
+Strgadget               = $0004    ; String Gadget
+Toggle                  = $0100    ; Toggle select
+Wbenchscreen            = $0001    ; Workbench screen
+Wd_rport                = $32      ; Window RastPort (Window structure)
+Wd_userport             = $56      ; Window UserPort (Window structure)
+space                   = $20      ; Space
+tab                     = $09      ; Tab
+
+; Library Vector Offsets
+
+_LVOCloselibrary        = -$019E   ; Exec function
+_LVOFindtask            = -$0126   ; Exec function
+_LVOForbid              = -$0084   ; Exec function
+_LVOGetmsg              = -$0174   ; Exec function
+_LVOOffgadget           = -$00AE   ; Exec function
+_LVOOpenlibrary         = -$0228   ; Exec function
+_LVOReplymsg            = -$017A   ; Exec function
+_LVOWaitport            = -$0180   ; Exec function
+_LVOAllocmem            = -$00C6   ; Dos function
+_LVOClose               = -$0024   ; Dos function
+_LVODelay               = -$00C6   ; Dos function
+_LVOFreemem             = -$00D2   ; Dos function
+_LVOOpen                = -$001E   ; Dos function
+_LVORead                = -$002A   ; Dos function
+_LVOWrite               = -$0030   ; Dos function
+_LVOAddgadget           = -$002A   ; Intuition function
+_LVOAutorequest         = -$015C   ; Intuition function
+_LVOClosewindow         = -$0048   ; Intuition function
+_LVODisplaybeep         = -$0060   ; Intuition function
+_LVODrawimage           = -$0072   ; Intuition function
+_LVOOpenwindow          = -$00CC   ; Intuition function
+_LVORefreshgadgets      = -$00DE   ; Intuition function
+_LVOSetwindowtitles     = -$0114   ; Intuition function
+_LVOAllocAslRequest     = -$0030   ; Asl function
+_LVOAslRequest          = -$003C   ; Asl function
+_LVOFreeFileRequest     = -$0024   ; Asl function
+_LVOArpfilerequest      = -$0126   ; ARP function
+_LVOTackon              = -$0270   ; ARP function
+
+; Some Useful Macros
+; ------------------
+
+; Macros waste memory and increase the size of the code, but they
+; make life a bit easier and the code a bit more readable.  All of
+; these are used to access the appropriate library functions.  The
+; library bases are loaded, the LVO prefix is added, and then the
+; function is called.  Simple!
+
+EXEC            MACRO
+        MOVE.L  Execbase,A6        ; Move Exec into a6
+        JSR     _LVO\1(A6)         ; Add Library offset and call function
+                ENDM
+
+CALLINT         MACRO
+        MOVE.L  INTBASE(A5),A6     ; Move Intuition into a6
+        JSR     _LVO\1(A6)         ; Add Library offset and call function
+                ENDM
+
+CALLDOS         MACRO
+        MOVE.L  DOSBASE(A5),A6     ; Move Dos into a6
+        JSR     _LVO\1(A6)         ; Add Library offset and call function
+                ENDM
+
+CALLREQ         MACRO
+        MOVE.L  REQBASE(A5),A6     ; Move REQ LIB into a6
+        JSR     _LVO\1(A6)         ; Add Library offset and call function
+                ENDM
+
+; Wb Startup Code
+; ---------------
+
+; I modified this slightly from that which is provided with the
+; includes that come with DevPac.  You can get similiar code
+; in the Public Domain, see STARTUPS on Fish 101.  All they do is
+; allow you to start your program from WB.
+
+        MOVEM.L  D0/A0,-(SP)        ;    save initial values
+        CLR.L    Returnmsg          ;    clear message
+        SUB.L    A1,A1              ;    subtract address
+        EXEC     Findtask           ;    find us
+        MOVE.L   D0,A4              ;    move process to a4
+        TST.L    Pr_cli(A4)         ;    test if CLI
+        BEQ      Fromworkbench      ;    otherwise go to workbench
+        MOVEM.L  (SP)+,D0/A0        ;    restore registers
+        BRA      End_startup        ;    and run the program
+
+Fromworkbench:
+
+        LEA      Pr_msgport(A4),A0  ;    load the message port
+        EXEC     Waitport           ;    wait for a message
+        LEA      Pr_msgport(A4),A0  ;    load the message port
+        EXEC     Getmsg             ;    then get it
+        MOVE.L   D0,Returnmsg       ;    save it for later reply
+        MOVEM.L  (SP)+,D0/A0        ;    restore registers
+
+End_startup:
+
+        BSR      Start              ;    call the program
+        MOVE.L   D0,-(SP)           ;    save it
+        TST.L    Returnmsg          ;    test if message
+        BEQ      Exittodos          ;    if I was a CLI
+        EXEC     Forbid             ;    forbid WB to close
+        MOVE.L   Returnmsg(Pc),A1   ;    load message
+        EXEC     Replymsg           ;    message received!
+
+Exittodos:
+
+        MOVE.L   (SP)+,D0           ;    exit code
+        RTS                         ;    Return To System
+
+; Program Starts Here
+; -------------------
+
+; The above code points to this Start identifier, which is where
+; the actual program starts!
+
+Start:
+
+; First we allocate some memory
+
+        MOVE.L  #TOTALMEM,D0       ; The total memory required
+        MOVE.L  #0,D1              ; Any mem will do (we clear it anyway)
+        EXEC    Allocmem           ; Go get it
+        BEQ     Exittodos          ; Whoops, off we go
+        MOVE.L  D0,A5              ; All OK, so transfer to A5
+        MOVE.L  A5,A0              ; Meanwhile transfer to A0
+        MOVE.L  TOTALMEM,D0        ; How many?
+        BSR     Clearbuff          ; Clear it please!
+
+; The following subroutines can be found in the "SUBROUTINES" section.
+
+        BSR     Openint             ; Open intuition library
+        BSR     Opendos             ; Open dos library
+        BSR     Win                 ; Open window
+        BSR     Image_win           ; Draw images on window
+
+Aslavail:
+
+; We'll find out if the Asl library is available.  If so, we can add two
+; gadgets to the window which will enable the lazy user to select the
+; infile and outfile using the Asl file requester.
+
+        LEA      Aslname,A1         ; Load ASL library into a1
+        MOVE.L   #$00,D0            ; Any version will do
+        EXEC     Openlibrary        ; Macro opens library
+        BEQ      ArpAvail           ; If there's a problem, go for Arp
+        MOVE.L   D0,REQBASE(A5)     ; Save the return address
+        MOVE.L   Winhd,A0           ; Load window handle to A0
+        LEA      Inreq,A1           ; Load the Req gadget for infile
+        CALLINT  Addgadget          ; Add it to the list
+        MOVE.L   Winhd,A0           ; Load window handle to A0
+        LEA      Outreq,A1          ; Load the Req gadget for outfile
+        CALLINT  Addgadget          ; Add it to the list
+        BRA      Refgads            ; Go and refresh the gadgets
+
+ArpAvail:
+
+; We'll find out if the ARP library is available.  If so, we can add two
+; gadgets to the window which will enable the lazy user to select the
+; infile and outfile using the ARP file requester.
+
+        LEA      Arpname,A1         ; Load ARP library into a1
+        MOVE.L   #$00,D0            ; Any version will do
+        EXEC     Openlibrary        ; Macro opens library
+        BEQ      Mainloop           ; If there's a problem, continue
+        MOVE.B   #1,IsArpOpen       ; Flag that library
+        MOVE.L   D0,REQBASE(A5)     ; Save the return address
+        MOVE.L   Winhd,A0           ; Load window handle to A0
+        LEA      Inreq,A1           ; Load the Req gadget for infile
+        CALLINT  Addgadget          ; Add it to the list
+        MOVE.L   Winhd,A0           ; Load window handle to A0
+        LEA      Outreq,A1          ; Load the Req gadget for outfile
+        CALLINT  Addgadget          ; Add it to the list
+        BRA      Refgads            ; Go and refresh the gadgets
+
+Mainloop:
+
+; This window is where all the action occurs.  From here the user
+; selects the files to be processed, and the conversion option required.
+
+        BSR      Waitformess        ; Bide time until user inputs
+        MOVE.L   Winhd,A0           ; Move window handle into a0
+        MOVE.L   Wd_userport(A0),A0 ; UserPort offset
+        EXEC     Getmsg             ; Macro gets window message
+        MOVE.L   D0,A1              ; Message transferred to a1
+        MOVE.L   A1,MESSAGE(A5)     ; Message saved for analysis
+        EXEC     Replymsg           ; Message received!
+        MOVE.L   MESSAGE(A5),A0     ; Load message into a0
+        MOVE.L   Im_class(A0),D0    ; Message class offset
+        CMPI.L   #Gadclosewindow,D0 ; Was the close gadget pressed
+        BEQ      Cleanup            ; Yes!  Outta here...
+        MOVE.L   MESSAGE(A5),A0     ; ...else Load message into a0
+        MOVE.L   Iaddress(A0),A0    ; Gadget address offset
+        MOVE.W   Gg_gadgetid(A0),D0 ; Gadget ID offset
+
+        CMP.B    #0,D0              ; Was the "PASCAL" gadget pressed
+        BEQ      Gadpasact          ; Yes!  Activate Pascal Option
+
+        CMP.B    #1,D0              ; Was the "ASSEM" gadget pressed
+        BEQ      Gadasmact          ; Yes!  Activate Assembly Option
+
+        CMP.B    #2,D0              ; Was the "C" gadget pressed
+        BEQ      Gadcact            ; Yes!  Activate C Option
+
+        CMP.B    #3,D0              ; Was the "OK" gadget pressed
+        BEQ      Errors             ; Yes!  See if there are any errors
+
+        CMP.B    #6,D0              ; Was the "Infile" req gadget pressed
+        BEQ      Gadifreq           ; Yes!  Activate requester
+
+        CMP.B    #7,D0              ; Was the "Outfile" req gadget pressed
+        BEQ      Gadofreq           ; Yes!  Activate requester
+
+        BRA      Mainloop           ; A safety net for Mainloop ->
+
+Gadpasact:
+
+; This next section firstly checks the Optionflag.  If this gadget has
+; already been activated then the flag is reset to zero, else it is set
+; to 1.  Then the other gadgets are checked.  If they are activated, they
+; are deactivated.  Finally the gadgets are "Refreshed" and we are then
+; sent back to the Mainloop.  The $0004 refers to the image type and
+; gadget activation mode, while the $0084 is the same flag but now the
+; gadget has been activated.
+
+        CMP.B   #$01,Optionflag     ; Is the option already flagged?
+        BEQ     1$                  ; Yes!  Branch to reset...
+        MOVE.B  #$01,Optionflag     ; ...else set to 1...
+        BRA     2$                  ; ...then jump to second marker
+1$:     CLR.B   Optionflag          ; Clear the option flag
+2$:     LEA     Pascal,A2           ; Load the pascal gadget structure
+        MOVE.L  Gadflags(A2),D0     ; Move to flag offset
+        CMPI.W  #$0084,D0           ; Is the gadget already pressed?
+        BEQ     Refgads             ; Yes!  Refresh and go...
+        LEA     Asm,A0              ; Load next gadget
+        CMPI.W  #$0004,Gadflags(A0) ; Is the gadget not pressed?
+        BEQ     3$                  ; Yes! Refresh and go...
+        MOVE.W  #$0004,Gadflags(A0) ; ...else "unpress" gadget
+3$:     LEA     C,A0                ; Load next gadget
+        CMPI.W  #$0004,Gadflags(A0) ; Is the gadget not pressed?
+        BEQ     4$                  ; Yes! Refresh and go...
+        MOVE.W  #$0004,Gadflags(A0) ; ...else "unpress" gadget
+4$:     BRA     Refgads             ; Go Refresh ->
+
+Gadasmact:
+
+; This next section firstly checks the Optionflag.  If this gadget has
+; already been activated then the flag is reset to zero, else it is set
+; to 2.  Then the other gadgets are checked.  If they are activated, they
+; are deactivated.  Finally the gadgets are "Refreshed" and we are then
+; sent back to the Mainloop.  The $0004 refers to the image type and
+; gadget activation mode, while the $0084 is the same flag but now the
+; gadget has been activated.
+
+        CMP.B   #$02,Optionflag     ; Is the option already flagged?
+        BEQ     1$                  ; Yes!  Branch to reset...
+        MOVE.B  #$02,Optionflag     ; ...else set to 2...
+        BRA     2$                  ; ...then jump to second marker
+1$:     CLR.B   Optionflag          ; Clear the option flag
+2$:     LEA     Asm,A2              ; Load the assem gadget structure
+        MOVE.L  Gadflags(A2),D0     ; Move to flag offset
+        CMPI.W  #$0084,D0           ; Is the gadget already pressed?
+        BEQ     Refgads             ; Yes!  Refresh and go...
+        LEA     Pascal,A0           ; Load next gadget
+        CMPI.W  #$0004,Gadflags(A0) ; Is the gadget not pressed?
+        BEQ     3$                  ; Yes! Refresh and go...
+        MOVE.W  #$0004,Gadflags(A0) ; ...else "unpress" gadget
+3$:     LEA     C,A0                ; Load next gadget
+        CMPI.W  #$0004,Gadflags(A0) ; Is the gadget not pressed?
+        BEQ     4$                  ; Yes! Refresh and go...
+        MOVE.W  #$0004,Gadflags(A0) ; ...else "unpress" gadget
+4$:     BRA     Refgads             ; Go Refresh ->
+
+Gadcact:
+
+; This next section firstly checks the Optionflag.  If this gadget has
+; already been activated then the flag is reset to zero, else it is set
+; to 3.  Then the other gadgets are checked.  If they are activated, they
+; are deactivated.  Finally the gadgets are "Refreshed" and we are then
+; sent back to the Mainloop.  The $0004 refers to the image type and
+; gadget activation mode, while the $0084 is the same flag but now the
+; gadget has been activated.
+
+        CMP.B   #$03,Optionflag     ; Is the option already flagged?
+        BEQ     1$                  ; Yes!  Branch to reset...
+        MOVE.B  #$03,Optionflag     ; ...else set to 3...
+        BRA     2$                  ; ...then jump to second marker
+1$:     CLR.B   Optionflag          ; Clear the option flag
+2$:     LEA     C,A2                ; Load the C gadget structure
+        MOVE.L  Gadflags(A2),D0     ; Move to flag offset
+        CMPI.W  #$0084,D0           ; Is the gadget already pressed?
+        BEQ     Refgads             ; Yes!  Refresh and go...
+        LEA     Pascal,A0           ; Load next gadget
+        CMPI.W  #$0004,Gadflags(A0) ; Is the gadget not pressed?
+        BEQ     3$                  ; Yes! Refresh and go...
+        MOVE.W  #$0004,Gadflags(A0) ; ...else "unpress" gadget
+3$:     LEA     Asm,A0              ; Load next gadget
+        CMPI.W  #$0004,Gadflags(A0) ; Is the gadget not pressed?
+        BEQ     4$                  ; Yes! Refresh and go...
+        MOVE.W  #$0004,Gadflags(A0) ; ...else "unpress" gadget
+4$:     BRA     Refgads             ; Go Refresh ->
+
+Gadifreq:
+
+; If the Infile Requester Gadget is pressed, we need to fire up a
+; requester, and we start with the preferable Asl requester.
+
+        TST.B   IsArpOpen          ; Are we Arping today?
+        BNE     Arpifreq           ; Yes, so outta this Asl territory
+
+        MOVE.L  #0,A0              ; I'll be initiating a...
+        CLR.L   D0                 ; ...File Requester...
+        CALLREQ AllocAslRequest    ; ...if that's OK with you!
+        MOVE.L  D0,A4              ; Else move the requester to A4
+        MOVE.L  D0,A0              ; A copy to A0
+        CALLREQ AslRequest         ; And fire it up!
+        MOVE.L  4(A4),A1           ; Move the resultant file info to A1
+        MOVE.L  8(A4),A2           ; and the Path info to A2
+
+        LEA     Infile_buf,A0      ; Get the buffer ready in A0
+        MOVE.L  #$64,D0            ; And the size is 100
+        BSR     Clearbuff;         ; Clear it baby!
+
+        LEA     Infile_buf,A3      ; Now load it to A3
+        MOVE.B  #$64,D3            ; And it's size to D3
+
+        TST.B   (A2)               ; Any path info?
+        BEQ     3$                 ; No so move on to the file info
+
+1$      MOVE.B  (A2)+,D0           ; Else move a byte to D0
+        TST.B   D0                 ; Test it's validity
+        BEQ     2$                 ; No good so finished
+        MOVE.B  D0,(A3)+           ; else move it to the Infile buffer
+        SUB.B   #1,D3              ; decrement counter
+        TST.B   D3                 ; at zero yet?
+        BNE     1$                 ; No so back for another character
+
+; If we've run outta space we gotta tell the punters.
+
+        MOVE.L  #$00,A0            ; All screens to beep!
+        CALLINT Displaybeep        ; Beep the display to wake up user
+        LEA     BigPath,A1         ; ...else load the message pointer...
+        BRA     Errormessage       ; ...and display the error
+
+2$      MOVE.B  -1(A3),D0          ; What was that last one?
+        CMP.B   #$3A,D0            ; Was it a full colon?
+        BEQ     3$                 ; Yep, so move on to file info
+        MOVE.B  #$2F,(A3)+         ; Move in a "/"
+        SUB.B   #1,D3              ; decrement counter
+        TST.B   D3                 ; at zero yet?
+        BNE     3$                 ; No so move along to file info
+
+; It'd be a bummer if the backslash was the last character, but it could
+; happen so we will notify the user.
+
+        MOVE.L  #$00,A0            ; All screens to beep!
+        CALLINT Displaybeep        ; Beep the display to wake up user
+        LEA     BigPath,A1         ; ...else load the message pointer...
+        BRA     Errormessage       ; ...and display the error
+
+3$      MOVE.B  (A1)+,D0           ; Move the file info character
+        TST.B   D0                 ; Hello?
+        BEQ     4$                 ; Yikes, outta here.
+        MOVE.B  D0,(A3)+           ; else add it to infile buffer
+        SUB.B   #1,D3              ; and decrement counter
+        TST.B   D3                 ; at zero yet?
+        BNE     3$                 ; Nope, so another character?
+
+        MOVE.L  #$00,A0            ; All screens to beep!
+        CALLINT Displaybeep        ; Beep the display to wake up user
+        LEA     BigPath,A1         ; ...else load the message pointer...
+        BRA     Errormessage       ; ...and display the error
+
+4$      MOVE.L  A4,A0              ; The last hurrah
+        CALLREQ FreeFileRequest    ; is to free the requester
+
+        BRA     Refgads            ; and then off to refresh gadgets
+
+Arpifreq:
+
+; We simply load the requester to A0 and then call the library function.
+; The Arp function "TackOn" adds the file name to the pathname.
+
+        LEA      Infile_buf,A0      ; Load the Infile buffer
+        MOVE.L   #$64,D0            ; ...and the size of the buffer
+        BSR      Clearbuff          ; We may need this buffer clear!
+        LEA      Arpdirbuff,A0      ; Load the Arp Directory buffer
+        MOVE.L   #$46,D0            ; ...and the size of the buffer
+        BSR      Clearbuff          ; We may need this buffer clear!
+        LEA      Arpfrequest,A0     ; Load the requester structure
+        CALLREQ  Arpfilerequest     ; Call the Requester
+        LEA      Arpdirbuff,A0      ; Load the Arp Directory buffer
+        LEA      Arpfilebuff,A1     ; Load the Arp File buffer
+        CALLREQ  Tackon             ; Macro calls function
+        LEA      Arpdirbuff,A0      ; Reload Arp Directory buffer
+        LEA      Infile_buf,A1      ; Load the Infile buffer
+1$      MOVE.B   (A0)+,D0           ; Move a character to D0
+        CMPI.B   #$00,D0            ; Is it a dud?
+        BEQ      2$                 ; Yes -> move along...
+        MOVE.B   D0,(A1)+           ; ...else add it to Infile buffer
+        BRA      1$                 ; ...and return
+2$      BRA      Refgads            ; clean up gadgets ->
+
+Gadofreq:
+
+; If the Outfile Requester Gadget is pressed, we need to fire up a
+; requester, and we start with the preferable Asl requester.
+
+        TST.B   IsArpOpen          ; Are we Arping today?
+        BNE     Arpofreq           ; Yes, so outta this Asl territory
+
+        MOVE.L  #0,A0              ; I'll be initiating a...
+        CLR.L   D0                 ; ...File Requester...
+        CALLREQ AllocAslRequest    ; ...if that's OK with you!
+        MOVE.L  D0,A4              ; Else move the requester to A4
+        MOVE.L  D0,A0              ; A copy to A0
+        CALLREQ AslRequest         ; And fire it up!
+        MOVE.L  4(A4),A1           ; Move the resultant file info to A1
+        MOVE.L  8(A4),A2           ; and the Path info to A2
+
+        LEA     Outfile_buf,A0     ; Get the buffer ready in A0
+        MOVE.L  #$64,D0            ; And the size is 100
+        BSR     Clearbuff;         ; Clear it baby!
+
+        LEA     Outfile_buf,A3     ; Now load it to A3
+        MOVE.B  #$64,D3            ; And it's size to D3
+
+        TST.B   (A2)               ; Any path info?
+        BEQ     3$                 ; No so move on to the file info
+
+1$      MOVE.B  (A2)+,D0           ; Else move a byte to D0
+        TST.B   D0                 ; Test it's validity
+        BEQ     2$                 ; No good so finished
+        MOVE.B  D0,(A3)+           ; else move it to the Infile buffer
+        SUB.B   #1,D3              ; decrement counter
+        TST.B   D3                 ; at zero yet?
+        BNE     1$                 ; No so back for another character
+
+; If we've run outta space we gotta tell the punters.
+
+        MOVE.L  #$00,A0            ; All screens to beep!
+        CALLINT Displaybeep        ; Beep the display to wake up user
+        LEA     BigPath,A1         ; ...else load the message pointer...
+        BRA     Errormessage       ; ...and display the error
+
+2$      MOVE.B  -1(A3),D0          ; What was that last one?
+        CMP.B   #$3A,D0            ; Was it a full colon?
+        BEQ     3$                 ; Yep, so move on to file info
+        MOVE.B  #$2F,(A3)+         ; Move in a "/"
+        SUB.B   #1,D3              ; decrement counter
+        TST.B   D3                 ; at zero yet?
+        BNE     3$                 ; No so move along to file info
+
+; It'd be a bummer if the backslash was the last character, but it could
+; happen so we will notify the user.
+
+        MOVE.L  #$00,A0            ; All screens to beep!
+        CALLINT Displaybeep        ; Beep the display to wake up user
+        LEA     BigPath,A1         ; ...else load the message pointer...
+        BRA     Errormessage       ; ...and display the error
+
+3$      MOVE.B  (A1)+,D0           ; Move the file info character
+        TST.B   D0                 ; Hello?
+        BEQ     4$                 ; Yikes, outta here.
+        MOVE.B  D0,(A3)+           ; else add it to infile buffer
+        SUB.B   #1,D3              ; and decrement counter
+        TST.B   D3                 ; at zero yet?
+        BNE     3$                 ; Nope, so another character?
+
+        MOVE.L  #$00,A0            ; All screens to beep!
+        CALLINT Displaybeep        ; Beep the display to wake up user
+        LEA     BigPath,A1         ; ...else load the message pointer...
+        BRA     Errormessage       ; ...and display the error
+
+4$      MOVE.L  A4,A0              ; The last hurrah
+        CALLREQ FreeFileRequest    ; is to free the requester
+
+        BRA     Refgads            ; and then off to refresh gadgets
+
+Arpofreq:
+
+; We simply load the requester to A0 and then call the library function.
+; The Arp function "TackOn" adds the file name to the pathname.
+
+        LEA      Outfile_buf,A0     ; Load the Outfile buffer
+        MOVE.L   #$64,D0            ; ...and the size of the buffer
+        BSR      Clearbuff          ; We may need this buffer clear!
+        LEA      Arpdirbuff,A0      ; Load the Arp Directory buffer
+        MOVE.L   #$46,D0            ; ...and the size of the buffer
+        BSR      Clearbuff          ; We may need this buffer clear!
+        LEA      Arpfrequest,A0     ; Load the requester structure
+        CALLREQ  Arpfilerequest     ; Call the Requester
+        LEA      Arpdirbuff,A0      ; Load the Arp Directory buffer
+        LEA      Arpfilebuff,A1     ; Load the Arp File buffer
+        CALLREQ  Tackon             ; Macro calls function
+        LEA      Arpdirbuff,A0      ; Reload Arp Directory buffer
+        LEA      Outfile_buf,A1     ; Load the Outfile buffer
+1$      MOVE.B   (A0)+,D0           ; Move a character to D0
+        CMPI.B   #$00,D0            ; Is it a dud?
+        BEQ      2$                 ; Yes -> move along...
+        MOVE.B   D0,(A1)+           ; ...else add it to Outfile
+        BRA      1$                 ; ...and return
+2$      BRA      Refgads            ; clean up gadgets ->
+
+Refgads:
+
+; Here we refresh the gadgets after changes have been made.
+
+        LEA      Pascal,A0          ; Load address of first gadget
+        MOVE.L   Winhd,A1           ; Load window pointer
+        MOVE.L   #$00,A2            ; No requester
+        CALLINT  Refreshgadgets     ; Macro calls function
+        BRA      Mainloop           ; Go Mainloop ->
+
+Errors:
+
+; If the "OK" gadget was pressed, we need to check to see that some
+; basic conditions have been satisfied.  E.g. Has an infile and outfile
+; been selected?  Has an option been selected?  Can I find and open the
+; files?
+
+        CLR.L   D0                  ; First a clean slate
+
+Checkinfile:
+
+        LEA     Infile_info,A0      ; Load the infile structure
+        MOVE.W  Numchars(A0),D0     ; Move to number of characters offset
+        TST.B   D0                  ; Test if anything was entered
+        BNE     Checkoutfile        ; If OK move on...
+        MOVE.L  #$00,A0             ; All screens to beep!
+        CALLINT Displaybeep         ; Beep the display to wake up user
+        LEA     Noinfile,A1         ; ...else load the message pointer...
+        BRA     Errormessage        ; ...and display the error
+
+Checkoutfile:
+
+        LEA     Outfile_info,A0     ; Load the outfile structure
+        MOVE.W  Numchars(A0),D0     ; Move to number of characters offset
+        TST.B   D0                  ; Test if anything was entered
+        BNE     Checkoptionflag     ; If OK move on...
+        MOVE.L  #$00,A0             ; All screens to beep!
+        CALLINT Displaybeep         ; Beep the display to wake up user
+        LEA     Nooutfile,A1        ; ...else load the message pointer...
+        BRA     Errormessage        ; ...and display the error
+
+Checkoptionflag:
+
+        MOVE.B  Optionflag,D0       ; Move optionflag to D3
+        TST.B   D0                  ; Test if option has been selected
+        BNE     Openfiles           ; If OK move on...
+        MOVE.L  #$00,A0             ; All screens to beep!
+        CALLINT Displaybeep         ; Beep the display to wake up user
+        LEA     Nooption,A1         ; ...else load the message pointer...
+        BRA     Errormessage        ; ...and display the error
+
+Openfiles:
+
+; Now that any errors have been dealt with, we can open the infile and
+; the outfile.
+
+        MOVE.L  #Infile_buf,D1      ; Move the name of the infile to D1
+        MOVE.L  #Mode_oldfile,D2    ; Opening as an existing file
+        CALLDOS Open                ; Macro calls open function
+        TST.B   D0                  ; Open OK?
+        BNE     1$                  ; Yes! Move on...
+        MOVE.L  #$00,A0             ; All screens to beep!
+        CALLINT Displaybeep         ; Beep the display to wake up user
+        LEA     Noinfileacc,A1      ; ...else load the message pointer...
+        BRA     Errormessage        ; ...and display the error
+1$      MOVE.L  D0,INFLHD(A5)         ; Save the infile handle
+
+; We need to check if the outfile exists, and alert the user...
+
+        MOVE.L  #Outfile_buf,D1     ; Move the name of the outfile to D1
+        MOVE.L  #Mode_oldfile,D2    ; Opening as a old file first
+        CALLDOS Open                ; Macro calls open function
+        MOVE.L  D0,OTFLHD(A5)        ; Save the file handle
+        TST.B   D0                  ; Test if the file already exists
+        BEQ     2$                  ; If "NO" then move on ->
+        MOVE.L  Winhd,A0            ; ...else load the window handle to A0
+        LEA     Atext,A1            ; ...and the main body text to A1
+        LEA     Ltext,A2            ; ...and the left text to A2
+        LEA     Rtext,A3            ; ...and the right text to A3
+        MOVE.L  #$00,D0             ; left button responds to mouse click
+        MOVE.L  #$00,D1             ; right button responds to mouse click
+        MOVE.L  #$c4,D2             ; requester length
+        MOVE.L  #$35,D3             ; requester height
+        CALLINT Autorequest         ; call the requester
+        TST.B   D0                  ; Test if clicked the right button
+        BEQ     2$                  ; Yes...so move on
+
+; Closing the files just in case we don't get back here again!
+
+        MOVE.L  INFLHD(A5),D1         ; No...so load infile handle...
+        CALLDOS Close               ; ...and close the file...
+        MOVE.L  OTFLHD(A5),D1        ; Load the outfile handle
+        CALLDOS Close               ; ...and close the file...
+        MOVE.L  #$00,A0             ; All screens to beep!
+        CALLINT Displaybeep         ; Beep the display to wake up user
+        BRA     Mainloop            ; Head back to main window
+2$      MOVE.L  OTFLHD(A5),D1        ; Load the outfile handle
+        CALLDOS Close               ; Macro calls function
+
+; Now we open the old file, knowing that all is OK with the user...
+
+        MOVE.L  #Outfile_buf,D1     ; Move the name of the outfile to D1
+        MOVE.L  #Mode_newfile,D2    ; Opening as a new file now
+        CALLDOS Open                ; Macro calls open function
+        TST.B   D0                  ; Open OK?
+        BNE     3$                  ; Yes! Move on...
+        MOVE.L  INFLHD(A5),D1         ; If error load infile handle...
+        CALLDOS Close               ; ...and close the file...
+        MOVE.L  #$00,A0             ; All screens to beep!
+        CALLINT Displaybeep         ; Beep the display to wake up user
+        LEA     Nooutfileacc,A1     ; ...then load the message pointer...
+        BRA     Errormessage        ; ...and display the error
+3$      MOVE.L  D0,OTFLHD(A5)        ; Save the outfile handle
+
+Closegadgets:
+
+; Now that all the errors have been dealt with and the files are open, we
+; can start the real work.  It's a good idea to shut down the gadgets and
+; display a suitable message, just to show the user that something is
+; happening.
+
+        CMP.L   #$00,REQBASE(A5)    ; Is Asl open (and the REQ gadgets)?
+        BEQ     1$                  ; No! Move along...
+        CMP.L   #$00,REQBASE(A5)    ; Is ARP open (and the REQ gadgets)?
+        BEQ     1$                  ; No! Move along...
+        LEA     Inreq,A0            ; Load gadget into A0
+        MOVE.L  Winhd,A1            ; Move window handle into A1
+        MOVE.L  #$00,A2             ; No requester
+        CALLINT Offgadget           ; Macro turns off gadget
+        LEA     Outreq,A0           ; Load gadget into A0
+        MOVE.L  Winhd,A1            ; Move window handle into A1
+        MOVE.L  #$00,A2             ; No requester
+        CALLINT Offgadget           ; Macro turns off gadget
+1$      LEA     Ok,A0               ; Load gadget into A0
+        MOVE.L  Winhd,A1            ; Move window handle into A1
+        MOVE.L  #$00,A2             ; No requester
+        CALLINT Offgadget           ; Macro turns off gadget
+        LEA     Pascal,A0           ; Load gadget into A0
+        MOVE.L  Winhd,A1            ; Move window handle into A1
+        MOVE.L  #$00,A2             ; No requester
+        CALLINT Offgadget           ; Macro turns off gadget
+        LEA     Asm,A0              ; Load gadget into A0
+        MOVE.L  Winhd,A1            ; Move window handle into A1
+        MOVE.L  #$00,A2             ; No requester
+        CALLINT Offgadget           ; Macro turns off gadget
+        LEA     C,A0                ; Load gadget into A0
+        MOVE.L  Winhd,A1            ; Move window handle into A1
+        MOVE.L  #$00,A2             ; No requester
+        CALLINT Offgadget           ; Macro turns off gadget
+        LEA     Pascal,A0           ; Load first gadget into A0
+        MOVE.L  Winhd,A1            ; Move window handle into A1
+        MOVE.L  #$00,A2             ; No requester
+        CALLINT Refreshgadgets      ; Macro calls function
+        LEA     Working,A1          ; Load working message to A1
+        MOVE.L  Winhd,A0            ; Move window handle into a0
+        LEA     Screentitle,A2      ; Load the screen title into a2
+        CALLINT Setwindowtitles     ; Macro changes screen title
+
+WhichOption:
+
+; This code checks to see which of the option buttons was activated.
+
+        CMP.B   #$02,Optionflag     ; Is Assembly the option selected?
+        BEQ     Remassem            ; Yes, so go do it!
+        CMP.B   #$03,Optionflag     ; Is C the option selected?
+        BEQ     Remc                ; Yes, so go do it!
+
+; The default, Rempas, is next...
+
+Rempas:
+
+; The reading and writing of the files now takes place.
+
+; RemPas checks for both ( comment ) and { comment } styles, but not
+; both at the same time (Assumption: if you start a comment with a
+; particular style, you'll end it the same way).  If a line consist
+; entirely of tabs, spaces or comments, it is deleted, hence removing a
+; lot of "white" space.
+
+1$      CLR.L   D4                  ; Counter for Line Buffer
+        LEA     LINEBUFFER(A5),A3   ; The line buffer
+2$      BSR     ReadChar            ; Read a character
+        TST.B   D0                  ; Read OK?
+        BEQ     Closefiles          ; We're gone...
+        MOVE.B  D0,(A3)+            ; Shift it to the line buffer
+        ADDQ.B  #$01,D4             ; Increment the character count
+        CMP.B   #$FF,D4             ; Are there too many?
+        BEQ     13$                 ; Yes! So pass along as a line anyway
+        CMP.B   #space,D0           ; Is the character a space?
+        BEQ     2$                  ; Yep, so back for more
+        CMP.B   #tab,D0             ; Is the character a tab?
+        BEQ     2$                  ; Yep, so back for more
+        CMP.B   #$7B,D0             ; Is the character an open curly?
+        BEQ     3$                  ; Yep, so go deal with it
+        CMP.B   #$28,D0             ; Is the character an open bracket?
+        BEQ     5$                  ; Yep, so go deal with it
+        CMP.B   #LF,D0              ; Is the character a linefeed
+        BEQ     1$                  ; Yep, so start a new line
+        CMP.B   #CR,D0              ; Is the character a carriage return
+        BEQ     1$                  ; Yep, so start a new line
+        BRA     8$                  ; Head off to complete line
+
+; Not all Pascal comments are comments.  Compiler directives are also
+; found in brackets.  This next section of code checks that we aren't
+; deleting a compiler directive.
+
+3$      BSR     ReadChar            ; Read a character
+        TST.B   D0                  ; Read OK?
+        BEQ     13$                 ; Head out ->
+        CMP.B   #$24,D0             ; Is it a $ character?
+        BEQ     4$                  ; Yep so leave it and head off..
+        CMP.B   #$7D,D0             ; Is it a close bracket?
+        BNE     3$                  ; No so read another char
+        BRA     2$                  ; Go back for more of the line...
+4$      MOVE.B  D0,(A3)+            ; Shift it to the line buffer
+        ADDQ.B  #$01,D4             ; Increment the character count
+        CMP.B   #$FF,D4             ; Are there too many?
+        BEQ     13$                 ; Yes! Pass along as a line anyway
+        BRA     8$                  ; Head off to process line...
+
+; Now we check that the bracket has an asterisk associated with it, and
+; in that way we won't confuse a bracket with a comment opener.
+
+5$      BSR     ReadChar            ; Read a character
+        TST.B   D0                  ; Read OK?
+        BEQ     13$                 ; Head out ->
+        CMP.B   #$2A,D0             ; Is it an asterisk?
+        BNE     7$                  ; No, so head off to process line
+        SUBQ.B  #$01,D4             ; Subtract that last character count
+        MOVE.B  D0,-(A3)            ; Pull it out of the buffer
+6$      BSR     ReadChar            ; Read a character
+        TST.B   D0                  ; Read OK?
+        BEQ     13$                 ; Head out ->
+        CMP.B   #$29,D0             ; Is that a ")"?
+        BNE     6$                  ; No, so go get another character
+        BRA     2$                  ; Else go back and complete the line
+7$      MOVE.B  D0,(A3)+            ; Move the character to the buffer
+        ADDQ.B  #$01,D4             ; Increment the character count
+        CMP.B   #$FF,D4             ; Are there too many?
+        BEQ     13$                 ; Yes! Pass along as a line anyway
+        BRA     2$                  ; Complete the line
+8$      BSR     ReadChar            ; Read next character
+        TST.B   D0                  ; Read OK?
+        BEQ     13$                 ; Head out ->
+        MOVE.B  D0,(A3)+            ; Else move to the buffer
+        ADDQ.B  #$01,D4             ; Increment the character count
+        CMP.B   #$FF,D4             ; Are there too many?
+        BEQ     13$                 ; Yes! Pass along as a line anyway
+        CMP.B   #LF,D0              ; Was character a linefeed?
+        BEQ     13$                 ; Yes! Go finish the line
+        CMP.B   #CR,D0              ; Was character a carriage return?
+        BEQ     13$                 ; Yes! Go Go finish the line
+        CMP.B   #$7B,D0             ; Is that a curly bracket I see?
+        BNE     10$                 ; No so off to to process line...
+        SUBQ.B  #$01,D4             ; Subtract that last character count
+        MOVE.B  D0,-(A3)            ; Pull it out of the buffer
+9$      BSR     ReadChar            ; Read a character
+        TST.B   D0                  ; Read OK?
+        BEQ     13$                 ; Head out ->
+        CMP.B   #$7D,D0             ; Is that another curly bracket?
+        BNE     9$                  ; No so go get another character
+        BRA     8$                  ; else process the rest of the line
+10$     CMP.B   #$28,D0             ; An opening bracket?
+        BNE     8$                  ; No so go back and finish the line
+        BSR     ReadChar            ; else read a character
+        TST.B   D0                  ; Read OK?
+        BEQ     13$                 ; Head out ->
+        CMP.B   #$2A,D0             ; Is it an asterisk?
+        BNE     12$                 ; Nope, I'm gone...
+        SUBQ.B  #$01,D4             ; Subtract that last character count
+        MOVE.B  D0,-(A3)            ; Pull it out of the buffer
+11$     BSR     ReadChar            ; Read the next character
+        TST.B   D0                  ; Read OK?
+        BEQ     13$                 ; Head out ->
+        CMP.B   #$29,D0             ; Is it a closing bracket?
+        BNE     11$                 ; No, so get another character
+        BRA     8$                  ; else complete the line
+12$     MOVE.B  D0,(A3)+            ; Move that character into A3
+        ADDQ.B  #$01,D4             ; Increment the character count
+        CMP.B   #$FF,D4             ; Are there too many?
+        BEQ     13$                 ; Yes! Pass along as a line anyway
+        BRA     8$                  ; else finish the line
+13$     LEA     LINEBUFFER(A5),A3   ; Load the whole buffer back to A3
+        MOVE.L  OTFLHD(A5),D1        ; Load the outfile handle
+        MOVE.L  A3,D2               ; Load the Linebuffer to D2
+        MOVE.L  D4,D3               ; How many is that!
+        CALLDOS Write               ; Macro calls function
+        BRA     1$                  ; PHEW! Start the next line...
+
+Remc:
+
+; The reading and writing of the files now takes place.
+
+; The "C" comment processing is quite straight forward, as there is only
+; one type of /* comment */
+
+1$      CLR.L   D4                  ; Counter for Line Buffer
+        LEA     LINEBUFFER(A5),A3   ; The line buffer is loaded to A3
+
+2$      BSR     ReadChar            ; Read a character
+        TST.B   D0                  ; Read OK?
+        BEQ     Closefiles          ; No! Close all files
+        MOVE.B  D0,(A3)+            ; Shift it to the line buffer
+        ADDQ.B  #$01,D4             ; Increment the character count
+        CMP.B   #$FF,D4             ; Are there too many?
+        BEQ     13$                 ; Yes! Pass along as a line anyway
+
+        CMP.B   #space,D0           ; Is the character a space?
+        BEQ     2$                  ; Yep, so back for more
+
+        CMP.B   #tab,D0             ; Is the character a tab?
+        BEQ     2$                  ; Yep, so back for more
+
+        CMP.B   #$2F,D0             ; Is the character a backslash?
+        BEQ     3$                  ; Yep, so head off to complete line
+
+        CMP.B   #LF,D0              ; Is the character a linefeed?
+        BEQ     1$                  ; Yep, so start a new line
+
+        CMP.B   #CR,D0              ; Is the character a carriage return?
+        BEQ     1$                  ; Yep, so start a new line
+
+        BRA     8$                  ; No, so head of for rest of line
+
+3$      BSR     ReadChar            ; Read a character
+        TST.B   D0                  ; Read OK?
+        BEQ     13$                 ; No! Pass along vestige of line
+        CMP.B   #$2A,D0             ; Is it an asterisk?
+        BNE     7$                  ; No, so complete the line
+
+        SUBQ.B  #$01,D4             ; Subtract that last character count
+        MOVE.B  D0,-(A3)            ; Pull it out of the buffer
+
+; The next few lines check to see that the comment is really starting and
+; really finishing.  This allows "/ not a comment /" and "/* just a * in
+; the comment */".
+
+6$      BSR     ReadChar            ; Read a character
+        TST.B   D0                  ; Read OK?
+        BEQ     13$                 ; No! Pass along vestige of line
+        CMP.B   #$2A,D0             ; Is it an asterisk?
+        BNE     6$                  ; No, so complete the comment
+
+        BSR     ReadChar            ; Read a character
+        TST.B   D0                  ; Read OK?
+        BEQ     13$                 ; No! Pass along vestige of line
+        CMP.B   #$2F,D0             ; Is it a backslash?
+        BNE     6$                  ; No, so complete the comment
+
+        BRA     2$                  ; Branch to complete line
+
+7$      MOVE.B  D0,(A3)+            ; Move the character into the buffer
+        ADDQ.B  #$01,D4             ; Increment the character count
+        CMP.B   #$FF,D4             ; Are there too many?
+        BEQ     13$                 ; Yes! Pass along as a line anyway
+        BRA     2$                  ; Branch to complete the line
+
+8$      BSR     ReadChar            ; Read a character
+        TST.B   D0                  ; Read OK?
+        BEQ     13$                 ; No! Pass along vestige of line
+        MOVE.B  D0,(A3)+            ; Move the character into the buffer
+        ADDQ.B  #$01,D4             ; Increment the character count
+        CMP.B   #$FF,D4             ; Are there too many?
+        BEQ     13$                 ; Yes! Pass along as a line anyway
+        CMP.B   #LF,D0              ; Was character a linefeed?
+        BEQ     13$                 ; Yes! Go finish line
+        CMP.B   #CR,D0              ; Was character a carriage return?
+        BEQ     13$                 ; Yes! Go finish line
+
+        CMP.B   #$2F,D0             ; Is that a backslash?
+        BNE     8$                  ; No, so continue line
+
+        BSR     ReadChar            ; else read next character
+        TST.B   D0                  ; Read OK?
+        BEQ     13$                 ; No! Pass along vestige of line
+        CMP.B   #$2A,D0             ; Is that an asterisk I see before me?
+        BNE     12$                 ; No so complete the line
+
+        SUBQ.B  #$01,D4             ; Subtract that last character count
+        MOVE.B  D0,-(A3)            ; Pull it out of the buffer
+
+11$     BSR     ReadChar            ; Read next character
+        TST.B   D0                  ; Read OK?
+        BEQ     13$                 ; No! Pass along vestige of line
+        CMP.B   #$2F,D0             ; Is that a backslash?
+        BNE     11$                 ; No so finish comment
+        BRA     8$                  ; Else finish the line
+
+12$     MOVE.B  D0,(A3)+            ; Move the character into the buffer
+        ADDQ.B  #$01,D4             ; Increment the character count
+        CMP.B   #$FF,D4             ; Are there too many?
+        BEQ     13$                 ; Yes! Pass along as a line anyway
+        BRA     8$                  ; Finish the line
+
+13$     LEA     LINEBUFFER(A5),A3   ; Load the whole buffer back to A3
+        MOVE.L  OTFLHD(A5),D1        ; Load the outfile handle
+        MOVE.L  A3,D2               ; Load the buffer to D2
+        MOVE.L  D4,D3               ; How many is that!
+        CALLDOS Write               ; Macro calls function
+        BRA     1$                  ; PHEW! Go get the next line
+
+Remassem:
+
+; The reading and writing of the files now takes place.
+
+; Assembler comments are somewhat easy to remove as long as people stick
+; to using either ; or *.  Because a lot of compilers will ignore what is
+; written after each directive anyway, some programmers don't bother with
+; the semi-colon.  If this is the case, the following algorithm will not
+; remove the comments.  For a good test case, run this file past RemCom
+; and compare resultant file to the original.
+
+; Any comments after a directive starting with an asterisk will not be
+; removed, just in case they are actually a multiply operand or location
+; marker.
+
+1$      CLR.L   D4                  ; Counter for Line Buffer
+        LEA     LINEBUFFER(A5),A3   ; The line buffer
+
+2$      BSR     ReadChar            ; Read a character
+        TST.B   D0                  ; Read OK?
+        BEQ     Closefiles          ; No! Close all files
+        MOVE.B  D0,(A3)+            ; Shift it to the line buffer
+        ADDQ.B  #$01,D4             ; Increment the character count
+        CMP.B   #$FF,D4             ; Are there too many?
+        BEQ     5$                  ; Yes! Pass along as a line anyway
+
+        CMP.B   #space,D0           ; Is the character a space?
+        BEQ     2$                  ; Yep, so back for more
+
+        CMP.B   #tab,D0             ; Is the character a tab?
+        BEQ     2$                  ; Yep, so back for more
+
+        CMP.B   #$2A,D0             ; Is the character an asterisk
+        BEQ     3$                  ; Yep, so head off to complete line
+
+        CMP.B   #$3B,D0             ; Is the character a semi-colon
+        BEQ     3$                  ; Yep, so head off to complete line
+
+        CMP.B   #LF,D0              ; Is the character a linefeed
+        BEQ     1$                  ; Yep, so start a new line
+
+        CMP.B   #CR,D0              ; Is the character a carriage return
+        BEQ     1$                  ; Yep, so start a new line
+
+        BRA     4$                  ; No, so head of for rest of line
+
+3$      BSR     ReadChar            ; Read a character
+        TST.B   D0                  ; Read OK?
+        BEQ     5$                  ; No! Complete line anyway
+
+        CMP.B   #LF,D0              ; Is it a linefeed?
+        BEQ     1$                  ; Yes, so go for next line
+
+        CMP.B   #CR,D0              ; Is it a carriage return?
+        BEQ     1$                  ; Yes, so go for next line
+
+        BRA     3$                  ; Go get another character
+
+4$      BSR     ReadChar            ; Read next character
+        TST.B   D0                  ; Read OK?
+        BEQ     5$                  ; No, so fish out line and end
+        MOVE.B  D0,(A3)+            ; Shift the character to A3
+        ADDQ.B  #$01,D4             ; Increment the character count
+        CMP.B   #$FF,D4             ; Are there too many?
+        BEQ     5$                  ; Yes! Pass along as a line anyway
+
+        CMP.B   #LF,D0              ; Is it a linefeed?
+        BEQ     5$                  ; Yes, so finish this line
+
+        CMP.B   #CR,D0              ; Is it a carriage return?
+        BNE     4$                  ; No, so go back for more
+
+5$      LEA     LINEBUFFER(A5),A3   ; Load the whole buffer back to A3
+        CLR.L   D3
+
+6$      MOVE.B  (A3)+,D0            ; Move a character out of buffer
+        CMP.B   #$3B,D0             ; Is it a semi-colon?
+        BEQ     7$                  ; Yes, so end the line here
+        ADD.B   #1,D3               ; Add one to the counter
+        CMP.B   D3,D4               ; End of the line yet?
+        BNE     6$                  ; Nope so go get another one
+
+        BRA     9$
+
+; Eliminate white space at the end of the line
+
+7$      MOVE.B  -(A3),D0            ; Going backwards!
+        CMP.B   #$3B,D0             ; Is that a semi-colon?
+        BEQ     7$                  ; We knew that was there!
+        CMP.B   #$20,D0             ; But is it now a space?
+        BNE     8$                  ; No so we must be at a command
+        SUB.B   #1,D3               ; Otherwise decrement counter
+        BRA     7$                  ; and back for more
+
+8$      MOVE.B  #LF,1(A3)           ; move in a linefeed
+        ADD.B   #1,D3               ; and count it in
+
+9$      MOVE.L  OTFLHD(A5),D1        ; Load the outfile handle
+        LEA     LINEBUFFER(A5),A3   ; Reload the buffer to A3
+        MOVE.L  A3,D2               ; Transfer address to D2
+        CALLDOS Write               ; Macro calls function
+        BRA     1$                  ; Go get next line
+
+Closefiles:
+
+; After closing off the last line, we need to close the open files.
+
+        MOVE.L  INFLHD(A5),D1         ; Load the infile handle
+        CALLDOS Close               ; Macro calls function
+        MOVE.L  OTFLHD(A5),D1        ; Load the outfile handle
+        CALLDOS Close               ; Macro calls function
+
+; The last stage of the program is to notify the user that all operations
+; have ceased.
+
+        LEA     Allok,A1            ; Load the final message into A1
+        MOVE.L  Winhd,A0            ; Move window handle into a0
+        LEA     Screentitle,A2      ; Load the screen title into a2
+        CALLINT Setwindowtitles     ; Macro changes screen title
+        MOVE.L  #$00,A0             ; All screens to beep!
+        CALLINT Displaybeep         ; Beep the display to wake up user
+        MOVE.L  #$50,D1             ; Delay closing
+        CALLDOS Delay               ; Macro calls function
+        BRA     Cleanup             ; finito and gone ->
+
+Errormessage:
+
+        MOVE.L  Winhd,A0            ; Move window handle into a0
+        LEA     Screentitle,A2      ; Load the screen title into a2
+        CALLINT Setwindowtitles     ; Macro changes screen title
+        BRA     Mainloop            ; Back to the mainloop ->
+
+; Subroutines
+; -----------
+
+; These sections of code are either re-used several times, or are
+; just easy to put somewhere at the end of the program where no-one
+; will mind too much!
+
+Openint:
+
+; The opening of the intuition library, including an error branch if things
+; don't go according to plan!
+
+        LEA      Intname,A1         ; Load intuition library into a1
+        EXEC     Openlibrary        ; Macro opens library
+        BEQ      Exittodos          ; If it doesn't open, we quit
+        MOVE.L   D0,INTBASE(A5)     ; Save the return address
+        RTS                         ; ...and back at you ->
+
+Opendos:
+
+; The opening of the dos library, including an error branch if things
+; don't go according to plan!
+
+        LEA      Dosname,A1         ; Load dos library into a1
+        MOVE.L   #$00,D0            ; Any version will do
+        EXEC     Openlibrary        ; Macro opens library
+        BEQ      Nodos              ; If there's a problem, close down
+        MOVE.L   D0,DOSBASE(A5)     ; Save the return address
+        RTS                         ; ...and back at you ->
+
+Nodos:
+
+; If dos fails to open, we need to close intuition.
+
+        BSR     Closeint            ; Jump to close intuition subroutine
+        BRA     Exittodos           ; Then off!
+
+Win:
+
+; This little bit opens the window.
+
+        LEA     Win1,A0             ; Load window definitions to a0
+        BSR     Openwin             ; Open the window
+        RTS                         ; ...and back at you ->
+
+Image_win:
+
+; Here the title is drawn, and the screen title changed.
+
+        BSR     Drawtitle           ; Draw title on window
+        BSR     Changetitle         ; Alter screen title
+        RTS                         ; ...and back at you ->
+
+Waitformess:
+
+; Rather than check all the time if the window has spoken to intuition,
+; we use the userport of the window structure to wait for a message
+; before doing anything else.  Low maintenance!
+
+        MOVE.L   Winhd,A0           ; Move window handle into a0
+        MOVE.L   Wd_userport(A0),A0 ; UserPort offset at byte 86
+        EXEC     Waitport           ; Macro waits for message from window
+        RTS                         ; ...and back at you ->
+
+Drawtitle:
+
+; This loads the image data, the x and y offsets for the image on the
+; window, and then draws the title onto the window.
+
+        MOVE.L  Winhd,A0            ; Move window handle into a0
+        MOVE.L  Wd_rport(A0),A0     ; RastPort offset found at byte 50
+        MOVE.L  #333,D0             ; x-offset in window loaded to d0
+        MOVE.L  #17,D1              ; y-offset in window loaded to d1
+        LEA     Title,A1            ; Load image data to a1
+        CALLINT Drawimage           ; Macro draws image
+        RTS                         ; ...and back at you ->
+
+Changetitle:
+
+; Here we change the workbench screen title.
+
+        MOVE.L  Winhd,A0           ; Move window handle into a0
+        MOVEA.L #-1,A1             ; Move current window title into a1
+        LEA     Screentitle,A2     ; Load the screen title into a2
+        CALLINT Setwindowtitles    ; Macro changes screen title
+        RTS                        ; ...and back at you ->
+
+Openwin:
+
+; Just calls the function and stores the window handle.
+
+        CALLINT Openwindow          ; Macro opens window
+        MOVE.L  D0,Winhd            ; Save return address (window handle)
+        RTS                         ; ...and back at you ->
+
+ReadChar:
+
+        TST.W   RDcount             ; Test the counter
+        BNE     1$                  ; If not equal to zero we're off
+        LEA     READBUFF(A5),A0     ; Else load the buffer
+        MOVE.W  #2000,D0            ; A couple of K's please
+        BSR     Clearbuff           ; Clear it buddy
+        MOVE.L  INFLHD(A5),D1         ; Move infile handle into D1
+        LEA     READBUFF(A5),A0     ; Reload to A0
+        MOVE.L  A0,D2               ; Move address to D2
+        MOVE.L  #2000,D3            ; Reading 2K
+        CALLDOS Read                ; Macro calls function
+        MOVE.W  D1,RDcount          ; How many was that?
+        MOVE.L  D2,A4               ; And where are they?
+1$      SUB.W   #1,RDcount          ; decrement counter
+        MOVE.B  (A4)+,D0            ; move one out mister
+        RTS                         ; back to the fray
+
+Clearbuff:
+
+; Here we clear memory buffers. A0 contains the location of the buffer
+; and D0 the size of the buffer.
+
+1$      SUBQ.B  #$01,D0             ; Subtract one from counter
+        MOVE.B  #$00,(A0)+          ; Move a dud into buffer
+        CMP.B   #$01,D0             ; Are we at zero yet?
+        BNE     1$                  ; No, so go back...
+        RTS                         ; outta here ->
+
+Cleanup:
+
+; Finally it's over, but before we can go home we need to do some quick
+; housekeeping!
+
+        BSR     CloseReqLib         ; If'n one is open!
+        BSR     Closewin            ; Close window
+        BSR     Closedos            ; Close dos
+        BSR     Closeint            ; Close intuition
+
+        MOVE.L  A5,A1               ; Where is that memory
+        MOVE.L  #TOTALMEM,D0        ; And how much was it again?
+        EXEC    Freemem             ; Won't be needing it no more...
+
+        RTS                         ; Exit
+
+Closewin:
+
+; Closes the window.
+
+        MOVE.L  Winhd,A0            ; Move window handle into a0
+        CALLINT Closewindow         ; Macro closes window down
+        RTS                         ; ...and back at you ->
+
+Closedos:
+
+; Closes the dos library.
+
+        MOVE.L   DOSBASE(A5),A1     ; Move dos base into a1
+        EXEC     Closelibrary       ; Macro closes dos
+        RTS                         ; ...and back at you ->
+
+Closeint:
+
+; Closes the intuition library.
+
+        MOVE.L   INTBASE(A5),A1     ; Move intuition base into a1
+        EXEC     Closelibrary       ; Macro closes intuition
+        RTS                         ; ...and back at you ->
+
+CloseReqLib:
+
+; Closes the asl or arp library.
+
+        TST.L   REQBASE(A5)         ; Is it open?
+        BEQ     1$                  ; Nah
+
+        MOVE.L   REQBASE(A5),A1     ; Move Asl base into a1
+        EXEC     Closelibrary       ; Macro closes Asl
+
+        RTS                         ; and home again
+
+1$      RTS                         ; ...and back at you ->
+
+; Structures and Memory Allocation
+; --------------------------------
+
+; Here are the definitions held for the structures used in the
+; program, as well as memory blocks set aside for definitions such
+; as the buffers.  I used a program called GadgetEd V2.0 by a bloke
+; called Jan van den Baard to help create this window and these
+; gadgets.
+
+Outreq:
+
+    DC.L    0                       ; No next gadget
+    DC.W    277,56                  ; x,y offsets on window
+    DC.W    39,13                   ; width, height
+    DC.W    Gadimage                ; image gadget
+    DC.W    Relverify               ; relverify
+    DC.W    Boolgadget              ; boolean gadget
+    DC.L    LButton                 ; gadget image
+    DC.L    0                       ; no other image
+    DC.L    Inreq_text0,0           ; Text structure, no exclude
+    DC.L    0                       ; no special info
+    DC.W    7                       ; gadget ID
+    DC.L    0                       ; no user data
+
+Inreq_text0:
+
+    DC.B    1,0                     ; front pen, back pen
+    DC.B    Rp_jam1                 ; draw mode
+
+    EVEN                            ; Fill to make even address for word
+
+    DC.W    8,3                     ; Left edge, top edge
+    DC.L    0                       ; No special font
+    DC.L    Inreq_itext0            ; The actual text
+    DC.L    0                       ; No next text
+
+Inreq:
+
+    DC.L    Outreq                  ; Next gadget
+    DC.W    277,30                  ; x,y offsets on window
+    DC.W    39,13                   ; width, height
+    DC.W    Gadimage                ; image gadget
+    DC.W    Relverify               ; relverify
+    DC.W    Boolgadget              ; boolean gadget
+    DC.L    LButton                 ; gadget image
+    DC.L    0                       ; no other image
+    DC.L    Inreq_text0,0           ; Text structure, no exclude
+    DC.L    0                       ; no special info
+    DC.W    6                       ; gadget ID
+    DC.L    0                       ; no user data
+
+Infile_info:
+
+    DC.L    Infile_buf              ; Buffer for input text
+    DC.L    0                       ; Buffer for undo function (Amiga-Q)
+    DC.W    0,256                   ; Buffer start position, no. of chars
+    DC.W    0,0,0                   ; DispPos,UndoPos,NumChars
+    DC.W    0,0,0                   ; DispCount,CLeft,CTop
+    DC.L    0,0,0                   ; Layer,LongInt,Keymap
+
+Infile_text0:
+
+    DC.B    1,0                     ; front pen, back pen
+    DC.B    Rp_jam1                 ; draw mode
+
+    EVEN                            ; Fill to make even address for word
+
+    DC.W    -3,-12                  ; Left edge, top edge
+    DC.L    0                       ; No special font
+    DC.L    Infile_itext0           ; The actual text
+    DC.L    0                       ; No next text
+
+Infile:
+
+    DC.L    0                       ; No next gadget
+    DC.W    24,32                   ; x,y offsets on window
+    DC.W    245,10                  ; width, height
+    DC.W    Gadimage                ; image gadget
+    DC.W    Relverify               ; relverify
+    DC.W    Strgadget               ; string gadget
+    DC.L    File                    ; gadget image
+    DC.L    0                       ; no other image
+    DC.L    Infile_text0,0          ; Text structure, no exclude
+    DC.L    Infile_info             ; no special info
+    DC.W    5                       ; gadget ID
+    DC.L    0                       ; no user data
+
+Outfile_info:
+
+    DC.L    Outfile_buf             ; Buffer for input text
+    DC.L    0                       ; Buffer for undo function (Amiga-Q)
+    DC.W    0,256                   ; Buffer start position, no. of chars
+    DC.W    0,0,0                   ; DispPos,UndoPos,NumChars
+    DC.W    0,0,0                   ; DispCount,CLeft,CTop
+    DC.L    0,0,0                   ; Layer,LongInt,Keymap
+
+Outfile_text0:
+
+    DC.B    1,0                     ; front pen, back pen
+    DC.B    Rp_jam1                 ; draw mode
+
+    EVEN                            ; Fill to make even address for word
+
+    DC.W    -2,-12                  ; Left edge, top edge
+    DC.L    0                       ; No special font
+    DC.L    Outfile_itext0          ; The actual text
+    DC.L    0                       ; No next text
+
+Outfile:
+
+    DC.L    Infile                  ; No next gadget
+    DC.W    24,58                   ; x,y offsets on window
+    DC.W    245,10                  ; width, height
+    DC.W    Gadimage                ; image gadget
+    DC.W    Relverify               ; relverify
+    DC.W    Strgadget               ; string gadget
+    DC.L    File                    ; gadget image
+    DC.L    0                       ; no other image
+    DC.L    Outfile_text0,0         ; Text structure, no exclude
+    DC.L    Outfile_info            ; no special info
+    DC.W    4                       ; gadget ID
+    DC.L    0                       ; no user data
+
+Ok_text0:
+
+    DC.B    2,0                     ; front pen, back pen
+    DC.B    Rp_jam1                 ; draw mode
+
+    EVEN                            ; Fill to make even address for word
+
+    DC.W    12,3                    ; Left edge, top edge
+    DC.L    0                       ; No special font
+    DC.L    Ok_itext0               ; The actual text
+    DC.L    0                       ; No next text
+
+Ok:
+
+    DC.L    Outfile                 ; Next gadget
+    DC.W    150,93                  ; x,y offsets on window
+    DC.W    39,13                   ; width, height
+    DC.W    Gadimage                ; image gadget
+    DC.W    Relverify               ; relverify
+    DC.W    Boolgadget              ; boolean gadget
+    DC.L    LButton                 ; gadget image
+    DC.L    0                       ; no other image
+    DC.L    Ok_text0,0              ; Text structure, no exclude
+    DC.L    0                       ; no special info
+    DC.W    3                       ; gadget ID
+    DC.L    0                       ; no user data
+
+C_text0:
+
+    DC.B    3,0                     ; front pen, back pen
+    DC.B    Rp_jam1                 ; draw mode
+
+    EVEN                            ; Fill to make even address for word
+
+    DC.W    40,3                    ; Left edge, top edge
+    DC.L    0                       ; No special font
+    DC.L    C_itext0                ; The actual text
+    DC.L    0                       ; No next text
+
+C:
+
+    DC.L    Ok                      ; Next gadget
+    DC.W    222,74                  ; x,y offsets on window
+    DC.W    89,13                   ; width, height
+    DC.W    Gadimage                ; image gadget
+    DC.W    Relverify+Toggle        ; relverify and toggle
+    DC.W    Boolgadget              ; boolean gadget
+    DC.L    Button                  ; gadget image
+    DC.L    0                       ; no other image
+    DC.L    C_text0,0               ; Text structure, no exclude
+    DC.L    0                       ; no special info
+    DC.W    2                       ; gadget ID
+    DC.L    0                       ; no user data
+
+Asm_text0:
+
+    DC.B    3,0                     ; front pen, back pen
+    DC.B    Rp_jam1                 ; draw mode
+
+    EVEN                            ; Fill to make even address for word
+
+    DC.W    25,3                    ; Left edge, top edge
+    DC.L    0                       ; No special font
+    DC.L    Asm_itext0              ; The actual text
+    DC.L    0                       ; No next text
+
+Asm:
+
+    DC.L    C                       ; Next gadget
+    DC.W    120,74                  ; x,y offsets on window
+    DC.W    89,13                   ; width, height
+    DC.W    Gadimage                ; image gadget
+    DC.W    Relverify+Toggle        ; relverify and toggle
+    DC.W    Boolgadget              ; boolean gadget
+    DC.L    Button                  ; gadget image
+    DC.L    0                       ; no other image
+    DC.L    Asm_text0,0             ; Text structure, no exclude
+    DC.L    0                       ; no special info
+    DC.W    1                       ; gadget ID
+    DC.L    0                       ; no user data
+
+Pascal_text0:
+
+    DC.B    3,0                     ; front pen, back pen
+    DC.B    Rp_jam1                 ; draw mode
+
+    EVEN                            ; Fill to make even address for word
+
+    DC.W    21,3                    ; Left edge, top edge
+    DC.L    0                       ; No special font
+    DC.L    Pascal_itext0           ; The actual text
+    DC.L    0                       ; No next text
+
+Pascal:
+
+    DC.L    Asm                     ; Next gadget
+    DC.W    18,74                   ; x,y offsets on window
+    DC.W    89,13                   ; width, height
+    DC.W    Gadimage                ; image gadget
+    DC.W    Relverify+Toggle        ; relverify and toggle
+    DC.W    Boolgadget              ; boolean gadget
+    DC.L    Button                  ; gadget image
+    DC.L    0                       ; no other image
+    DC.L    Pascal_text0,0          ; Text structure, no exclude
+    DC.L    0                       ; no special info
+    DC.W    0                       ; gadget ID
+    DC.L    0                       ; no user data
+
+Win1:
+
+    DC.W    89,46,457,112           ; x,y-offset,width,height
+    DC.B    0,1                     ; print colour, background colour
+    DC.L    $00000260               ; IDCMP flags: CLOSEWINDOW|GADGETDOWN
+    DC.L    $0000100e               ; ACTIVATE|WINDOWDRAG|WINDOWDEPTH
+                                    ; WINDOWCLOSE
+    DC.L    Pascal,0                ; First gadget, Standard checkmark
+    DC.L    Win1_title              ; Window name
+    DC.L    0,0                     ; screen pointer, no custom bitmap
+    DC.W    0,0,0,0,Wbenchscreen    ; maintained by intuition
+
+Atext:
+
+; Intuitext structure
+
+        DC.B    $02,$01,$01        ; FrontPen,BackPen,DrawMode
+
+        EVEN                       ; Fill to make even address for word
+
+        DC.W    $0D,$08            ; Left edge, top edge
+        DC.L    $00                ; No special font
+        DC.L    Atx                ; The actual text
+        DC.L    $00                ; No next text
+
+Ltext:
+
+; Intuitext structure
+
+        DC.B    $02,$01,$01        ; FrontPen,BackPen,DrawMode
+
+        EVEN                       ; Fill to make even address for word
+
+        DC.W    $06,$03            ; Left edge, top edge
+        DC.L    $00                ; No special font
+        DC.L    Ltx                ; The actual text
+        DC.L    $00                ; No next text
+
+Rtext:
+
+; Intuitext structure
+
+        DC.B    $02,$01,$01        ; FrontPen,BackPen,DrawMode
+
+        EVEN                       ; Fill to make even address for word
+
+        DC.W    $06,$03            ; Left edge, top edge
+        DC.L    $00                ; No special font
+        DC.L    Rtx                ; The actual text
+        DC.L    $00                ; No next text
+
+Arpfrequest:
+
+; ARP requester structure.  I had tonnes of trouble with this one, and
+; I'd like to thank George Knight, and his article on ARP requesters
+; from Megadisc #30B for assistance.  I'm still not too sure, so the
+; structure explanations are brief.  Good Luck!
+
+        DC.L    Win1_title         ; Window name
+        DC.L    Arpfilebuff        ; buffer for file information
+        DC.L    Arpdirbuff         ; buffer for dir information
+        DC.L    0                  ; Window or NULL
+        DC.B    40                 ; Function Flags
+        DC.B    0                  ; Reserved - set to NULL
+        DC.L    0                  ; Func to call for wildcards
+        DC.L    0                  ; RESERVED
+
+; Memory allocations
+
+Arpdirbuff:     DS.B    $46        ; memory for Dir (from ARP requester)
+Arpfilebuff:    DS.B    $1E        ; memory for File (from ARP requester)
+Infile_buf:     DS.B    $64        ; In file buffer
+Optionflag:     DC.B    $00        ; memory for option flag
+IsArpOpen:      DC.B    $00        ; memory for Requester flag
+Outfile_buf:    DS.B    $64        ; Out file buffer
+Returnmsg:      DS.L    $01        ; memory for WB return message
+Winhd:          DS.L    $01        ; memory for window handle
+RDcount:        DC.W    $00        ; A word counter for each major read
+
+; Other text : hopefully self-explanatory
+
+Allok:          DC.B    "Finished!  Bye...",$00
+Arpname:        DC.B    "arp.library",$00
+Aslname:        DC.B    "asl.library",$00
+Asm_itext0:     DC.B    "Assem",$00
+Atx:            DC.B    "Copy over old file?",$00
+C_itext0:       DC.B    "C",$00
+Dosname:        DC.B    "dos.library",$00
+Infile_itext0:  DC.B    "Infile",$00
+Inreq_itext0:   DC.B    "REQ",$00
+Intname:        DC.B    "intuition.library",$00
+Ltx:            DC.B    "No",$00
+Ok_itext0:      DC.B    "OK",$00
+Outfile_itext0: DC.B    "Outfile",$00
+Pascal_itext0:  DC.B    "Pascal",$00
+Rtx:            DC.B    "Yes",$00
+Screentitle:    DC.B    "FREEWARE - 1995",$00
+Win1_title:     DC.B    "Your Choice:",$00
+Working:        DC.B    "Working...",$00
+
+; The error messages
+
+BigPath:        DC.B    "Path too long!",$00
+Noinfile:       DC.B    "Select Infile!",$00
+Noinfileacc:    DC.B    "Can",Apost,"t access Infile!",$00
+Nooption:       DC.B    "Select Option!",$00
+Nooutfile:      DC.B    "Select Outfile!",$00
+Nooutfileacc:   DC.B    "Can",Apost,"t open Outfile!",$00
+
+; Image Data
+; ----------
+
+; The images used were converted using GfxMaster by TIK/RETIRE.  They
+; blow out the size of the executable a bit, but they make the
+; interface look nice even under WB1.3!
+
+        SECTION Image,Data,Chip                  ; Data for images
+
+; If you use Devpac to compile this, change the above to...
+;
+;       SECTION Image,Data_C
+;
+
+Title:
+
+        DC.W    0,0
+        DC.W    $0068,$0056,$0002
+        DC.L    Titledat
+        DC.B    $03,0
+        DC.L    0
+
+Titledat:
+
+        DC.W    $7000,$1F80,$0000,$0003,$8000,$0000,$0000,$7000
+        DC.W    $FFC0,$0000,$003F,$C000,$0000,$0000,$7001,$FFE0
+        DC.W    $0000,$007F,$F000,$0000,$0000,$7003,$FFF0,$0000
+        DC.W    $00FF,$F800,$0000,$0000,$7007,$FFF8,$3877,$71FF
+        DC.W    $F8E3,$BB80,$0000,$7003,$FFF8,$7CFF,$FBFF,$F1F7
+        DC.W    $FFC0,$0000,$7000,$FFF8,$FFFF,$FFFF,$E3FF,$FFE0
+        DC.W    $0000,$7000,$FFFB,$FFFF,$FFFF,$87FF,$FFF0,$0000
+        DC.W    $7000,$FFF7,$FFFF,$FFFF,$8FFF,$FFF0,$0000,$7000
+        DC.W    $FFE3,$FFFF,$FFFF,$9FFF,$FFE0,$0000,$7000,$FFE3
+        DC.W    $FEFF,$FFFF,$9FFF,$FFE0,$0000,$7000,$FFF3,$FCFF
+        DC.W    $FFFF,$BFFF,$FFE0,$0000,$7001,$FFFF,$FFFF,$FFFF
+        DC.W    $FFFF,$FFE0,$0000,$7003,$FFFF,$FFFF,$FFFF,$FFFF
+        DC.W    $FFF0,$0000,$7007,$FFFF,$FFFF,$FFFF,$FFFF,$FFF8
+        DC.W    $0000,$700F,$FFFC,$FFFF,$FFFF,$F7FF,$FFF8,$0000
+        DC.W    $7007,$DFF8,$7E7F,$FE3F,$E3F3,$FFF0,$0000,$7001
+        DC.W    $0F10,$3C3F,$FC0F,$81E1,$FFE0,$0000,$7000,$0200
+        DC.W    $0808,$8800,$0040,$4440,$0000,$7000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$7000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$7000,$0000,$0000,$0000,$0000
+        DC.W    $4838,$1C00,$7000,$0000,$0000,$0000,$0000,$FC7C
+        DC.W    $3E00,$7000,$0000,$000F,$C49F,$C000,$FC3E,$1F00
+        DC.W    $7000,$0000,$0008,$3CF1,$C000,$FC3C,$1E00,$7000
+        DC.W    $0000,$000E,$E311,$C000,$787C,$9F00,$7000,$0000
+        DC.W    $000E,$E311,$C000,$787F,$FE00,$7000,$0000,$000F
+        DC.W    $E311,$C000,$303C,$9C00,$7000,$0000,$000F,$D86F
+        DC.W    $C000,$0000,$0000,$7000,$0000,$0007,$D86F,$8000
+        DC.W    $0000,$0000,$7000,$0000,$0000,$FFFC,$0000,$0000
+        DC.W    $0000,$7000,$0000,$0001,$F89E,$0000,$0000,$0000
+        DC.W    $7000,$0000,$0001,$F89E,$0000,$0000,$0000,$7000
+        DC.W    $0000,$0001,$F89E,$0000,$0000,$0000,$7000,$0000
+        DC.W    $0007,$C47F,$8000,$0000,$0000,$7000,$0000,$0007
+        DC.W    $C47F,$8000,$0000,$0000,$7000,$0000,$0007,$189F
+        DC.W    $8000,$0000,$0000,$7000,$0000,$0007,$189F,$8000
+        DC.W    $0000,$0000,$7000,$0000,$000F,$D89F,$C000,$0000
+        DC.W    $0000,$7000,$0000,$000E,$E313,$C000,$0000,$0000
+        DC.W    $7000,$0000,$003E,$E313,$F000,$0000,$0000,$7000
+        DC.W    $0000,$007F,$FFFF,$F800,$0000,$0000,$7000,$0000
+        DC.W    $007F,$00FF,$F800,$0000,$0000,$7000,$0000,$007F
+        DC.W    $00FF,$F800,$0000,$0000,$7000,$0000,$007F,$C3FF
+        DC.W    $F800,$0000,$0000,$7000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$7000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$7000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $7000,$0803,$9C0F,$9F8F,$7700,$0000,$0000,$7000
+        DC.W    $1404,$6210,$6050,$8880,$0000,$0000,$7000,$1402
+        DC.W    $B40B,$B76E,$DB00,$0000,$0000,$7000,$2A02,$B40B
+        DC.W    $B5D1,$5400,$0000,$0000,$7000,$2A02,$D408,$5150
+        DC.W    $4800,$0000,$0000,$7000,$4102,$D40B,$95D1,$5400
+        DC.W    $0000,$0000,$7000,$5D02,$A40A,$176E,$DB00,$0000
+        DC.W    $0000,$7000,$8884,$6411,$2051,$8880,$0000,$0000
+        DC.W    $7000,$7703,$980E,$1F8E,$7700,$0000,$0000,$7000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$7000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$7000,$3181,$1338
+        DC.W    $C84A,$00EE,$0000,$0000,$7000,$4A42,$ACC5,$34B5
+        DC.W    $0111,$0000,$0000,$7000,$B5A2,$EB5A,$D4B5,$02EA
+        DC.W    $0000,$0000,$7000,$8A42,$AB46,$D4B5,$012A,$0000
+        DC.W    $0000,$7000,$B5A2,$4B56,$17B5,$C1DA,$0000,$0000
+        DC.W    $7000,$4A42,$ACDA,$D0CC,$222A,$0000,$0000,$7000
+        DC.W    $3181,$1325,$2F33,$C1C4,$0000,$0000,$7000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$7000,$44CE,$3226
+        DC.W    $49CC,$063B,$838C,$4400,$7000,$AB31,$4D59,$B632
+        DC.W    $0944,$4452,$AA00,$7000,$BAD6,$B496,$95ED,$16BA
+        DC.W    $83AD,$3200,$7000,$AAD1,$B556,$A52D,$16A2,$8262
+        DC.W    $AA00,$7000,$9215,$85D0,$B5A1,$10BA,$85ED,$AA00
+        DC.W    $7000,$AAD6,$B556,$B62D,$16C6,$8433,$1100,$7000
+        DC.W    $4529,$4A29,$49D2,$0939,$03CC,$EE00,$7000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$7000,$324E,$EE32
+        DC.W    $1CC0,$0000,$0000,$0000,$7000,$4DB1,$114D,$2320
+        DC.W    $0000,$0000,$0000,$7000,$B5AE,$B6B5,$16D0,$0000
+        DC.W    $0000,$0000,$7000,$B5B2,$B1B5,$16D0,$0000,$0000
+        DC.W    $0000,$7000,$85BD,$B585,$D610,$0000,$0000,$0000
+        DC.W    $7000,$B662,$B6B4,$22D0,$0000,$0000,$0000,$7000
+        DC.W    $499C,$494B,$DD20,$0000,$0000,$0000,$7000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$7000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$7000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$7000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000
+        DC.W    $9000,$0000,$0000,$0000,$0000,$0000,$0000,$9000
+        DC.W    $1200,$0000,$0002,$0000,$0000,$0000,$9000,$E700
+        DC.W    $0000,$0027,$0000,$0000,$0000,$9001,$EF80,$0000
+        DC.W    $004F,$C000,$0000,$0000,$9002,$6BC0,$0000,$0095
+        DC.W    $8000,$0000,$0000,$9000,$69C0,$2044,$41B4,$0082
+        DC.W    $2200,$0000,$9000,$68C0,$70EE,$E134,$01C7,$7700
+        DC.W    $0000,$9000,$6880,$BDFF,$F334,$03EF,$FF80,$0000
+        DC.W    $9000,$6903,$9866,$6334,$04E3,$3300,$0000,$9000
+        DC.W    $6A01,$9066,$6334,$0C63,$3300,$0000,$9000,$6F01
+        DC.W    $A066,$63B4,$0C63,$3300,$0000,$9000,$6B81,$C066
+        DC.W    $63A4,$0C63,$3300,$0000,$9000,$D1C1,$C066,$61C4
+        DC.W    $2C63,$3300,$0000,$9001,$B9F3,$E466,$61E4,$CE63
+        DC.W    $3300,$0000,$9003,$7EE0,$F8E6,$68FF,$8747,$3340
+        DC.W    $0000,$9004,$1C40,$7077,$703E,$0383,$BB80,$0000
+        DC.W    $9000,$0800,$2022,$2000,$0101,$1100,$0000,$9000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$9000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$9000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$9000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$9000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$9000,$0000,$0000,$0000,$0000,$4838
+        DC.W    $1C00,$9000,$0000,$0000,$0000,$0000,$4804,$0200
+        DC.W    $9000,$0000,$0000,$0000,$0000,$4818,$0C00,$9000
+        DC.W    $0000,$0000,$0000,$0000,$3020,$0200,$9000,$0000
+        DC.W    $0000,$0000,$0000,$303C,$9C00,$9000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$9000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$9000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$9000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$9000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $9000,$0000,$0000,$0000,$0000,$0000,$0000,$9000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$9000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$9000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$9000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$9000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$9000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$9000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $9000,$0000,$0000,$0000,$0000,$0000,$0000,$9000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$9000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$9000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$9000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$9000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$9000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$9000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $9000,$0000,$0000,$0000,$0000,$0000,$0000,$9000
+        DC.W    $0803,$9C0F,$9F8F,$7700,$0000,$0000,$9000,$0801
+        DC.W    $4804,$4891,$2400,$0000,$0000,$9000,$1401,$4804
+        DC.W    $4A20,$2800,$0000,$0000,$9000,$1401,$2807,$8E20
+        DC.W    $3000,$0000,$0000,$9000,$3E01,$2804,$0A20,$2800
+        DC.W    $0000,$0000,$9000,$2201,$1804,$0891,$2400,$0000
+        DC.W    $0000,$9000,$7703,$980E,$1F8E,$7700,$0000,$0000
+        DC.W    $9000,$0000,$0000,$0000,$0000,$0000,$0000,$9000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$9000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$9000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$9000,$3181,$1338,$C84A
+        DC.W    $00EE,$0000,$0000,$9000,$4241,$14A5,$284A,$0104
+        DC.W    $0000,$0000,$9000,$7181,$54B9,$284A,$00C4,$0000
+        DC.W    $0000,$9000,$4A41,$B4A9,$E84A,$0024,$0000,$0000
+        DC.W    $9000,$3181,$1325,$2F33,$C1C4,$0000,$0000,$9000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$9000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$9000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$9000,$44CE,$3226,$49CC
+        DC.W    $063B,$838C,$4400,$9000,$4529,$4B69,$6A12,$0941
+        DC.W    $0050,$CC00,$9000,$552E,$4AA9,$5AD2,$0941,$019C
+        DC.W    $4400,$9000,$6DEA,$7A2F,$4A5E,$0F41,$0212,$4400
+        DC.W    $9000,$4529,$4A29,$49D2,$0939,$03CC,$EE00,$9000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$9000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$9000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$9000,$324E,$EE32,$1CC0
+        DC.W    $0000,$0000,$0000,$9000,$4A50,$494A,$0920,$0000
+        DC.W    $0000,$0000,$9000,$4A4C,$4E4A,$0920,$0000,$0000
+        DC.W    $0000,$9000,$7A42,$4A7A,$09E0,$0000,$0000,$0000
+        DC.W    $9000,$499C,$494B,$DD20,$0000,$0000,$0000,$9000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$9000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$9000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$9000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$9000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000
+
+Button:
+
+        DC.W    0,0
+        DC.W    $0059,$000D,$0002
+        DC.L    Buttondat
+        DC.B    $03,0
+        DC.L    0
+
+Buttondat:
+
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0080,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0180,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0180,$0000,$0000,$0000,$0000,$0000,$0180
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0180,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0180,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0180,$0000,$0000,$0000,$0000,$0000,$0180
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0180,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0180,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0180,$0000,$0000,$0000,$0000,$0000,$0180
+        DC.W    $7FFF,$FFFF,$FFFF,$FFFF,$FFFF,$FF80
+        DC.W    $FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FF00,$C000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$C000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$C000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $C000,$0000,$0000,$0000,$0000,$0000,$C000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$C000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$C000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $C000,$0000,$0000,$0000,$0000,$0000,$C000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$C000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$C000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $8000,$0000,$0000,$0000,$0000,$0000
+
+File:
+
+        DC.W    -7,-3
+        DC.W    $00FE,$000E,$0002
+        DC.L    Filedat
+        DC.B    $03,0
+        DC.L    0
+
+Filedat:
+
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $7FFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF
+        DC.W    $FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFF4
+        DC.W    $4000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0004
+        DC.W    $4000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0004
+        DC.W    $4000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0004
+        DC.W    $4000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0004
+        DC.W    $4000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0004
+        DC.W    $4000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0004
+        DC.W    $4000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0004
+        DC.W    $4000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0004
+        DC.W    $4000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0004
+        DC.W    $4000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0004
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0004
+        DC.W    $FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF
+        DC.W    $FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFC
+        DC.W    $FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF
+        DC.W    $FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFF8
+        DC.W    $8000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0008
+        DC.W    $8000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0008
+        DC.W    $8000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0008
+        DC.W    $8000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0008
+        DC.W    $8000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0008
+        DC.W    $8000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0008
+        DC.W    $8000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0008
+        DC.W    $8000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0008
+        DC.W    $8000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0008
+        DC.W    $8000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0008
+        DC.W    $8000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0008
+        DC.W    $FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF
+        DC.W    $FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFFF,$FFF8
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+        DC.W    $0000,$0000,$0000,$0000,$0000,$0000,$0000,$0000
+
+LButton:
+
+        DC.W    0,0
+        DC.W    $0028,$000D,$0002
+        DC.L    LButtondat
+        DC.B    $03,0
+        DC.L    0
+
+LButtondat:
+
+        DC.W    $0000,$0000,$0200,$0000,$0000,$0600,$0000,$0000
+        DC.W    $0600,$0000,$0000,$0600,$0000,$0000,$0600,$0000
+        DC.W    $0000,$0600,$0000,$0000,$0600,$0000,$0000,$0600
+        DC.W    $0000,$0000,$0600,$0000,$0000,$0600,$0000,$0000
+        DC.W    $0600,$0000,$0000,$0600,$7FFF,$FFFF,$FE00
+        DC.W    $FFFF,$FFFF,$FC00,$C000,$0000,$0000,$C000,$0000
+        DC.W    $0000,$C000,$0000,$0000,$C000,$0000,$0000,$C000
+        DC.W    $0000,$0000,$C000,$0000,$0000,$C000,$0000,$0000
+        DC.W    $C000,$0000,$0000,$C000,$0000,$0000,$C000,$0000
+        DC.W    $0000,$C000,$0000,$0000,$8000,$0000,$0000
+
+        END                ; Thank you umpire, thank you user!
+
+
+
+
