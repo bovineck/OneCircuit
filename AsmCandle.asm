@@ -153,7 +153,7 @@ CheckSlowRising:
   rcall GenSlowLow       ; else get a new low value
   ldi sstatus, 0         ; kick over status to falling
 
-  rcall FinishedSlow     ; and move on
+  rjmp FinishedSlow      ; and move on
 
 CheckSlowFalling:
 
