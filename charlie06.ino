@@ -28,7 +28,6 @@ void lightemup (byte portdirection, byte portstate, int mydelay) {
     DDRB = portdirection;
     PORTB = portstate;
     delay(mydelay);
-
 }
 
 // a little bit of zero led activity if needed
