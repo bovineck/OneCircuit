@@ -36,7 +36,6 @@ void deadled (int howlongdead) {
 }
 
 void setup() {
-
     // a memory blowout in the next two lines to initialise random number
     pinMode(PB1, INPUT);
     myrand = analogRead(PB1);
@@ -52,7 +51,6 @@ uint16_t gimmerand(uint16_t small, uint16_t big) {
 
 // random light effect
 void randomleds() {
-
     for (byte theloops = 0; theloops < 100; theloops++) {
         byte thislight = gimmerand(0, 12);
         lightemup(leds12[thislight][0], leds12[thislight][1], 50);
@@ -63,7 +61,6 @@ void randomleds() {
 
 // moving single led backwards and forwards
 void cylons() {
-
     for (byte theloops = 0; theloops < looper; theloops++) {
         for (byte outercount = 0; outercount < 12; outercount++) {
             lightemup(leds12[outercount][0], leds12[outercount][1], 25);
@@ -124,7 +121,6 @@ void backandforthtwo() {
                 lightemup(leds12[10 - outercount][0], leds12[10 - outercount][1], 1);
                 lightemup(leds12[11 - outercount][0], leds12[11 - outercount][1], 1);
             }
-
         }
         deadled(1);
     }
